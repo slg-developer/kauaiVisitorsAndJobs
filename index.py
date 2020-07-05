@@ -74,9 +74,9 @@ df_joined = vis.join(dfJ4, vis.year_month == dfJ4.year_month).select(
     , "month_int"
     , "visitor_type_id"
     , "visitor_count"
-    , "Arts_Entertainment_Recreation"
-    , "Accommodation"
-    , "FoodServices_DrinkingPlaces"
+    , col("Arts_Entertainment_Recreation").cast(DoubleType())
+    , col("Accommodation").cast(DoubleType())
+    , col("FoodServices_DrinkingPlaces").cast(DoubleType())
 )
 # start machine learning training
 # Select features and label
@@ -111,6 +111,14 @@ prediction = model.transform(test)
 predicted = prediction.select("features", "prediction", "trueLabel")
 predicted.show()
 
-
-
+# Retrieve the Root Mean Square Error (RMSE)
+# There are a number of metrics used to measure the variance between predicted
+# and actual values. Of these, the root mean square error (RMSE) is a commonly
+# used value that is measured in the same units as the prediced and actual
+# values. You can use the RegressionEvaluator class to retrieve the RMSE.
+# my notes-> in this case, I think RMSE shows the average number of jobs
+# between predicted and actual job values
+evaluator = RegressionEvaluator(labelCol="trueLabel", predictionCol="prediction", metricName="rmse")
+rmse = evaluator.evaluate(prediction)
+print ("Root Mean Square Error (RMSE):", rmse)
 
