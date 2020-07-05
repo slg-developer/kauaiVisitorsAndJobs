@@ -8,6 +8,9 @@ import xlrd
 import csv
 from pyspark.context import SparkContext
 from pyspark.sql.session import SparkSession
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
+from pyspark.ml.evaluation import RegressionEvaluator
+
 sc = SparkContext('local')
 spark = SparkSession(sc)
 import pandas
@@ -61,13 +64,53 @@ dfJ1 = dfJ.withColumn("year_str", col("year").cast(StringType()).substr(1, 4))
 #  cast(StringType()).split('.',1)[0])
 # add column for year_month
 dfJ2 = dfJ1.withColumn("year_month", concat(col("year_str"), lit("-"), col("month_num")))
+dfJ3 = dfJ2.withColumn("year_int", col("year_str").cast(IntegerType()))
+dfJ4 = dfJ3.withColumn("month_int", col("month_num").cast(IntegerType()))
 # make the join to visitor dataframe
 vis = dfVisitors.alias('vis')
-df_joined = vis.join(dfJ2, vis.year_month == dfJ2.year_month).select(
+df_joined = vis.join(dfJ4, vis.year_month == dfJ4.year_month).select(
     "vis.year_month"
+    , "year_int"
+    , "month_int"
     , "visitor_type_id"
     , "visitor_count"
     , "Arts_Entertainment_Recreation"
     , "Accommodation"
     , "FoodServices_DrinkingPlaces"
 )
+# start machine learning training
+# Select features and label
+data = df_joined.select(
+    "year_int"
+    , "month_int"
+    , "visitor_type_id"
+    , "visitor_count"
+    , col("Arts_Entertainment_Recreation").alias("label")
+)
+# Split the data
+splits = data.randomSplit([0.7, 0.3])
+train = splits[0]
+test = splits[1].withColumnRenamed("label", "trueLabel")
+# Define the pipeline
+assembler = VectorAssembler(inputCols=[
+    "year_int"
+    , "month_int"
+    , "visitor_type_id"
+    , "visitor_count"
+], outputCol="features")
+lr = LinearRegression(labelCol="label",featuresCol="features")
+pipeline = Pipeline(stages=[assembler, lr])
+# Tune Parameters using the CrossValidator class to evaluate each combination
+# of parameters defined in a ParameterGrid against multiple folds of the data
+paramGrid = ParamGridBuilder().addGrid(lr.regParam, [0.3, 0.01]).addGrid(lr.maxIter, [10, 5]).build()
+cv = CrossValidator(estimator=pipeline, evaluator=RegressionEvaluator(), estimatorParamMaps=paramGrid, numFolds=2)
+
+model = cv.fit(train)
+# Test the Model
+prediction = model.transform(test)
+predicted = prediction.select("features", "prediction", "trueLabel")
+predicted.show()
+
+
+
+
