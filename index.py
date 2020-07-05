@@ -27,9 +27,20 @@ kauai_csv.close(),
 # Load visitor data into pandas dataframe for unipoviting later.  Just keep the
 # header row, total visitors, domestic, and international rows.
 csv_visitors_pandadf = pandas.read_csv('Visitor Arrival_State of Hawaii-Monthly.csv', nrows=3)
+
+# load mapping table to get from FEB to 02, etc...
+month_schema = StructType([
+    StructField("month_text", StringType())
+    , StructField("month_num", StringType())
+])
+dfMapMonths = spark.read.format("csv")\
+    .option("header", True)\
+    .schema(month_schema)\
+    .load('map_months.csv')
 # Load job data
 dfJobs = spark.read.format("csv")\
-    .options(header='true', inferschema='true')\
+    .option("header", True)\
+    .option("infertype", True)\
     .load("kauai_jobs_data.csv")
 
 # Unpivot visitor data so years and moths are in nrows
@@ -38,28 +49,25 @@ csv_visitors_pandadf = csv_visitors_pandadf.unstack(level=1).reset_index(name='v
 # Visitor Arrivals, 2 = International Visitor Arrivals
 # pandas uses NaN for null.  Use .dropna() to drop rows with no visitor count
 csv_visitors_clean = csv_visitors_pandadf.loc[ (csv_visitors_pandadf['level_0'] != 'Series') ].dropna()
-csv_visitors_clean = csv_visitors_clean.rename(columns={'level_0': 'year-month', 'level_1': 'visitor_type_id'})
+csv_visitors_clean = csv_visitors_clean.rename(columns={'level_0': 'year_month', 'level_1': 'visitor_type_id'})
 # convert pandas dataframe to spark
 dfVisitors = spark.createDataFrame(csv_visitors_clean)
-dfMapMonths = spark.read.format("csv")\
-    .options(header='true', inferschema='true')\
-    .load('map_months.csv')
-# print(dfVisitors.show(100))
-# print(dfVisitors.show(100))
-print(dfMapMonths.show())
-# lr = LinearRegression(maxIter=10, regParam=0.3, elasticNetParam=0.8)
-
-# # Fit the model
-# lrModel = lr.fit(training)
-
-# # Print the coefficients and intercept for linear regression
-# print("Coefficients: %s" % str(lrModel.coefficients))
-# print("Intercept: %s" % str(lrModel.intercept))
-
-# # Summarize the model over the training set and print out some metrics
-# trainingSummary = lrModel.summary
-# print("numIterations: %d" % trainingSummary.totalIterations)
-# print("objectiveHistory: %s" % str(trainingSummary.objectiveHistory))
-# trainingSummary.residuals.show()
-# print("RMSE: %f" % trainingSummary.rootMeanSquaredError)
-# print("r2: %f" % trainingSummary.r2)
+# join kauai jobs dataframe with map months so we can join to visitor data on year-months
+jobs = dfJobs.alias('jobs')
+m = dfMapMonths.alias('m')
+dfJ = jobs.join(m, jobs.month == m.month_text, 'inner')
+# add column for year as str
+dfJ1 = dfJ.withColumn("year_str", col("year").cast(StringType()).substr(1, 4))
+#  cast(StringType()).split('.',1)[0])
+# add column for year_month
+dfJ2 = dfJ1.withColumn("year_month", concat(col("year_str"), lit("-"), col("month_num")))
+# make the join to visitor dataframe
+vis = dfVisitors.alias('vis')
+df_joined = vis.join(dfJ2, vis.year_month == dfJ2.year_month).select(
+    "vis.year_month"
+    , "visitor_type_id"
+    , "visitor_count"
+    , "Arts_Entertainment_Recreation"
+    , "Accommodation"
+    , "FoodServices_DrinkingPlaces"
+)
